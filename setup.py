@@ -11,7 +11,8 @@ install_deps = ["importlib-metadata",
         "scipy>=1.9.0",
         "scikit-learn",
         "cellpose>=4.0.1",
-        "scanimage-tiff-reader>=1.4.1"
+        "scanimage-tiff-reader>=1.4.1",
+        "h5py"
         ]
 
 gui_deps = [
@@ -39,7 +40,7 @@ test_deps = [
       "pytest",
       "tenacity",
       "tqdm",
-      "pynwb>=2.3.2", #this is needed as test_io contains a test with nwb
+      "pynwb>=2.3.2", # this is needed as test_io contains a test with nwb
       "pytest-qt>3.3.0",
 ]
 

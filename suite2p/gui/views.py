@@ -9,6 +9,48 @@ from qtpy.QtGui import QPainter
 from .. import extraction
 
 
+def create_work_in_progress_image(Ly, Lx):
+    """Create a dummy image that says 'work in progress'
+    
+    For now, creates a simple gradient pattern as a placeholder.
+    In the future, this will be replaced with actual decrosstalk visualization.
+    
+    Parameters
+    ----------
+    Ly : int
+        Height of the image
+    Lx : int
+        Width of the image
+        
+    Returns
+    -------
+    mimg : ndarray
+        Work in progress image (Ly x Lx), values between 0 and 1
+    """
+    # Create a simple diagonal gradient pattern as placeholder
+    mimg = np.zeros((Ly, Lx), np.float32)
+    
+    # Create diagonal stripes to indicate "work in progress"
+    for i in range(Ly):
+        for j in range(Lx):
+            # Diagonal stripe pattern
+            if ((i + j) // 20) % 2 == 0:
+                mimg[i, j] = 0.3
+            else:
+                mimg[i, j] = 0.7
+
+    # Add text region in center (darker region where text would go)
+    center_y, center_x = Ly // 2, Lx // 2
+    text_height, text_width = min(Ly // 4, 64), min(Lx // 2, 256)
+    y_start = max(0, center_y - text_height // 2)
+    y_end = min(Ly, center_y + text_height // 2)
+    x_start = max(0, center_x - text_width // 2)
+    x_end = min(Lx, center_x + text_width // 2)
+    mimg[y_start:y_end, x_start:x_end] = 0.5
+
+    return mimg
+
+
 def make_buttons(parent):
     """ view buttons"""
     # view buttons
@@ -20,6 +62,7 @@ def make_buttons(parent):
         "T: max projection",
         "Y: mean img chan2, corr",
         "U: mean img chan2",
+        "C: decrosstalk",
     ]
     b = 0
     parent.viewbtns = QButtonGroup(parent)
@@ -27,17 +70,17 @@ def make_buttons(parent):
     vlabel.setText("<font color='white'>Background</font>")
     vlabel.setFont(parent.boldfont)
     vlabel.resize(vlabel.minimumSizeHint())
-    parent.l0.addWidget(vlabel, 1, 0, 1, 1)
+    parent.l0.addWidget(vlabel, 2, 0, 1, 1)
     for names in parent.view_names:
         btn = ViewButton(b, "&" + names, parent)
         parent.viewbtns.addButton(btn, b)
         if b > 0:
-            parent.l0.addWidget(btn, b + 2, 0, 1, 1)
+            parent.l0.addWidget(btn, b + 3, 0, 1, 1)
         else:
-            parent.l0.addWidget(btn, b + 2, 0, 1, 1)
+            parent.l0.addWidget(btn, b + 3, 0, 1, 1)
             label = QLabel("sat: ")
             label.setStyleSheet("color: white;")
-            parent.l0.addWidget(label, b + 2, 1, 1, 1)
+            parent.l0.addWidget(label, b + 3, 1, 1, 1)
         btn.setEnabled(False)
         b += 1
     parent.viewbtns.setExclusive(True)
@@ -49,7 +92,7 @@ def make_buttons(parent):
     slider.setTickPosition(QSlider.TicksBelow)
     parent.l0.addWidget(slider, 3, 1, len(parent.view_names) - 2, 1)
 
-    b += 2
+    b += 3
     return b
 
 
@@ -64,13 +107,14 @@ def init_views(parent):
         "T: max projection",
         "Y: mean img chan2, corr",
         "U: mean img chan2",
+        "C: decrosstalk",
 
     assigns parent.views
 
     """
     parent.Ly, parent.Lx = parent.ops["Ly"], parent.ops["Lx"]
-    parent.views = np.zeros((7, parent.Ly, parent.Lx, 3), np.float32)
-    for k in range(7):
+    parent.views = np.zeros((8, parent.Ly, parent.Lx, 3), np.float32)
+    for k in range(8):
         if k == 2:
             if "meanImgE" not in parent.ops:
                 parent.ops = extraction.enhanced_mean_image(parent.ops)
@@ -122,6 +166,20 @@ def init_views(parent):
                 mimg99 = np.percentile(mimg, 99)
                 mimg = (mimg - mimg1) / (mimg99 - mimg1)
                 mimg = np.maximum(0, np.minimum(1, mimg))
+        elif k == 7:
+            # Decrosstalk episodic mean FOV
+            if hasattr(parent, 'decrosstalk_stack') and parent.decrosstalk_stack is not None:
+                # Use current frame from stack
+                frame_idx = parent.decrosstalk_frame if hasattr(parent, 'decrosstalk_frame') else 0
+                mimg = parent.decrosstalk_stack[frame_idx]
+                # Normalize to 0-1 range
+                mimg1 = np.percentile(mimg, 1)
+                mimg99 = np.percentile(mimg, 99)
+                mimg = (mimg - mimg1) / (mimg99 - mimg1)
+                mimg = np.maximum(0, np.minimum(1, mimg))
+            else:
+                # No decrosstalk data available
+                mimg = create_work_in_progress_image(parent.Ly, parent.Lx)
         else:
             mimg = np.zeros((parent.Ly, parent.Lx), np.float32)
 
@@ -161,6 +219,22 @@ class ViewButton(QPushButton):
                 parent.viewbtns.button(b).setStyleSheet(parent.styleUnpressed)
         self.setStyleSheet(parent.stylePressed)
         parent.ops_plot["view"] = bid
+        
+        # Show/hide decrosstalk slider based on view
+        if hasattr(parent, 'decrosstalk_slider'):
+            if bid == 7 and hasattr(parent, 'decrosstalk_stack') and parent.decrosstalk_stack is not None:
+                # Show slider for decrosstalk view
+                num_frames = parent.decrosstalk_stack.shape[0]
+                parent.decrosstalk_slider.setMaximum(num_frames - 1)
+                parent.decrosstalk_slider.setValue(parent.decrosstalk_frame)
+                parent.decrosstalk_slider_label.setText(f"Frame: {parent.decrosstalk_frame+1}/{num_frames}")
+                parent.decrosstalk_slider.setVisible(True)
+                parent.decrosstalk_slider_label.setVisible(True)
+            else:
+                # Hide slider for other views
+                parent.decrosstalk_slider.setVisible(False)
+                parent.decrosstalk_slider_label.setVisible(False)
+        
         parent.update_plot()
 
 

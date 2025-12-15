@@ -6,7 +6,7 @@ import os, pathlib, shutil, sys, warnings
 import numpy as np
 import pyqtgraph as pg
 from qtpy import QtGui, QtCore
-from qtpy.QtWidgets import QMainWindow, QApplication, QWidget, QGridLayout, QCheckBox, QLineEdit, QLabel
+from qtpy.QtWidgets import QMainWindow, QApplication, QWidget, QGridLayout, QCheckBox, QLineEdit, QLabel, QSlider
 
 from . import menus, io, merge, views, buttons, classgui, traces, graphics, masks
 from .. import run_s2p, default_ops
@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
         # default plot options
         self.ops_plot = {
             "ROIs_on": True,
+            "neuropil_on": False,
             "color": 0,
             "view": 0,
             "opacity": [127, 255],
@@ -147,9 +148,36 @@ class MainWindow(QMainWindow):
         self.checkBox.toggle()
         self.checkBox.stateChanged.connect(self.ROIs_on)
         self.l0.addWidget(self.checkBox, 0, 0, 1, 2)
+        
+        # NEUROPIL CHECKBOX
+        self.checkBoxNP = QCheckBox("NP Masks On [P]")
+        self.checkBoxNP.setStyleSheet("color: white;")
+        self.checkBoxNP.stateChanged.connect(self.neuropil_on)
+        self.checkBoxNP.setEnabled(False)
+        self.l0.addWidget(self.checkBoxNP, 1, 0, 1, 2)
 
         buttons.make_selection(self)
         buttons.make_cellnotcell(self)
+        
+        # Decrosstalk frame slider (top row, after cell selection buttons)
+        self.decrosstalk_slider_label = QLabel("Decrosstalk Frame:")
+        self.decrosstalk_slider_label.setStyleSheet("color: white;")
+        self.decrosstalk_slider_label.setFont(QtGui.QFont("Arial", 8, QtGui.QFont.Bold))
+        self.decrosstalk_slider_label.setVisible(False)
+        self.l0.addWidget(self.decrosstalk_slider_label, 0, 22, 1, 1)
+        
+        self.decrosstalk_slider = QSlider(QtCore.Qt.Horizontal)
+        self.decrosstalk_slider.setMinimum(0)
+        self.decrosstalk_slider.setMaximum(0)  # Will be set when data is loaded
+        self.decrosstalk_slider.setValue(0)
+        self.decrosstalk_slider.setTickPosition(QSlider.TicksBelow)
+        self.decrosstalk_slider.setTickInterval(1)
+        self.decrosstalk_slider.setStyleSheet("QSlider::handle:horizontal { background-color: white; }")
+        self.decrosstalk_slider.setVisible(False)
+        self.decrosstalk_slider.setMaximumWidth(120)
+        self.decrosstalk_slider.valueChanged.connect(self.decrosstalk_frame_changed)
+        self.l0.addWidget(self.decrosstalk_slider, 0, 23, 1, 4)
+        
         b0 = views.make_buttons(self)  # b0 says how many
         b0 = masks.make_buttons(self, b0)
         masks.make_colorbar(self, b0)
@@ -259,6 +287,11 @@ class MainWindow(QMainWindow):
         self.p1.addItem(self.color1)
         self.view1.setLevels([0, 255])
         self.color1.setLevels([0, 255])
+        
+        # Neuropil overlay
+        self.neuropil1 = pg.ImageItem(viewbox=self.p1, parent=self)
+        self.neuropil1.autoDownsample = False
+        self.neuropil1.setLevels([0, 255])
         #self.view1.setImage(np.random.rand(500,500,3))
         #x = np.arange(0,500)
         #img = np.concatenate((np.zeros((500,500,3)), 127*(1+np.tile(np.sin(x/100)[:,np.newaxis,np.newaxis],(1,500,1)))),axis=-1)
@@ -277,6 +310,11 @@ class MainWindow(QMainWindow):
         self.p2.addItem(self.color2)
         self.view2.setLevels([0, 255])
         self.color2.setLevels([0, 255])
+        
+        # Neuropil overlay
+        self.neuropil2 = pg.ImageItem(viewbox=self.p2, parent=self)
+        self.neuropil2.autoDownsample = False
+        self.neuropil2.setLevels([0, 255])
 
         # LINK TWO VIEWS!
         self.p2.setXLink("plot1")
@@ -338,6 +376,8 @@ class MainWindow(QMainWindow):
                 #Agus
                 elif event.key() == QtCore.Qt.Key_N:
                     self.checkBoxd.toggle()
+                elif event.key() == QtCore.Qt.Key_P:
+                    self.checkBoxNP.toggle()
                 elif event.key() == QtCore.Qt.Key_B:
                     self.checkBoxn.toggle()
                 elif event.key() == QtCore.Qt.Key_V:
@@ -564,6 +604,37 @@ class MainWindow(QMainWindow):
             self.p2.removeItem(self.color2)
         self.win.show()
         self.show()
+    
+    def neuropil_on(self, state):
+        """Toggle neuropil mask visibility."""
+        if QtCore.Qt.CheckState(state) == QtCore.Qt.Checked:
+            self.ops_plot["neuropil_on"] = True
+            self.p1.addItem(self.neuropil1)
+            self.p2.addItem(self.neuropil2)
+        else:
+            self.ops_plot["neuropil_on"] = False
+            self.p1.removeItem(self.neuropil1)
+            self.p2.removeItem(self.neuropil2)
+        if self.loaded:
+            self.update_plot()
+        self.win.show()
+        self.show()
+    
+    def decrosstalk_frame_changed(self, value):
+        """Update decrosstalk view when slider changes."""
+        if hasattr(self, 'decrosstalk_stack') and self.decrosstalk_stack is not None:
+            self.decrosstalk_frame = value
+            # Update label with current frame
+            num_frames = self.decrosstalk_stack.shape[0]
+            self.decrosstalk_slider_label.setText(f"Frame: {value+1}/{num_frames}")
+            # Refresh the view if decrosstalk is currently displayed
+            if self.ops_plot["view"] == 7:
+                views.init_views(self)
+                views.plot_views(self)
+                # Redraw masks on top
+                if self.ops_plot["ROIs_on"]:
+                    M = masks.draw_masks(self)
+                    masks.plot_masks(self, M)
 
     def plot_clicked(self, event):
         """left-click chooses a cell, right-click flips cell to other view"""
